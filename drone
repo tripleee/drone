@@ -1,0 +1,196 @@
+#!/usr/bin/env python
+
+import subprocess
+import sys
+import os
+
+# Hard constant: maximum number of categories that dbacl can handle
+super_threshold = 64
+# Tweak: hash table size for super categories
+super_hash_size = 20
+# Tweak: hash table size for regular categories
+regular_hash_size = 8
+
+def learn (category, samples, dbaclopts=[]):
+    """
+    Run dbacl to learn a new category from the indicated list of samples.
+    The samples collection can also be a list of directories of samples.
+    """
+    cmd=["dbacl", "-l", category]
+    cmd.extend(dbaclopts)
+    cmd.extend(samples)
+    print "### %s ###" % cmd ########
+    p = subprocess.Popen(cmd, shell=False,
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    out, err = p.communicate()
+    #ret = p.returncode
+    if err:
+        for error in err.split('\r\n'):
+            if 'dbacl:warning: table full, some tokens ignored - ' in error:
+                pass
+            else:
+                sys.stderr.write('dbacl -l %s: %s\n' % (category, err))
+    if out:
+        print out
+
+
+def categorize (categories, samples, dbaclopts=[], threshold=1.0):
+    """
+    Run dbacl with the indicated categories on each of the samples.
+    Return a list of (sample, cat, { 'cat0': 0.21, 'cat1': 0, 'cat3': 0.79 })
+    tuples, where the selected category "cat" is the highest-ranking category
+    with at least a score higher than or equal to the requested threshold,
+    or otherwise None.  Percentages are scaled to a probability
+    between 0 and 1.
+    """
+
+    def parsedbacloutput (str):
+        """
+        Parse the output from "dbacl -N" into a dictionary of category,
+        probability pairs.  Return a tuple of the highest-ranking category
+        and the raw dictionary of results from the parse.
+        """
+        o = str.rstrip('\r\n').split()
+        category = None
+        highest = 0.0
+        r = dict()
+        for i in xrange (0, len(o), 2):
+            cat = o[i]
+            prob = float(o[i+1].rstrip('%'))/100
+            if prob >= threshold and prob > highest:
+                highest = prob
+                category = cat
+            r[cat] = prob
+        return (category, r)
+
+    cmd=["dbacl", "-R", "-N"]
+    cmd.extend(dbaclopts)
+    [cmd.extend(["-c", c]) for c in categories]
+    result = []
+
+    for sample in samples:
+        assert isinstance(sample, basestring)
+        c = cmd[:]
+        c.extend([sample])
+        #print ("### %s ###" % c) ########
+        p = subprocess.Popen(c, shell=False,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        out, err = p.communicate()
+        #ret = p.returncode
+        if err:
+            sys.stderr.write("%s\n" % err)
+        (cat, r) = parsedbacloutput(out)
+        result.append((sample, cat, r))
+    return result
+
+def map_directories(filenames):
+    """
+    Derive a dictionary of directory names populated with file names
+    from a list of just filenames.  In other words, divide the list of
+    filenames into a dict where the directory names are the keys, and
+    the values are a list of filenames in that directory, with the
+    directory name intact.  Return the number of leaf nodes and the dict.
+    """
+    dirs = dict()
+    for f in filenames:
+        dir = f.split('/')[0]
+        if dir in dirs:
+            dirs[dir].append(f)
+        else:
+            dirs[dir] = [f]
+    return len(filenames), dirs
+
+def map_directories_residue (directory_samples):
+    """
+    From the output of categorize, discatd the correctly categorized entries
+    and move the remaining entries to new subdirectories, where the number
+    suffix of the directory name is incremented by one.
+    Return the total number of remaining entries and a hash of directories
+    with the list of entries for each as its values.
+    """
+    residue = dict()
+    entries = 0
+    #print "directory_samples is %r" % (directory_samples) ########
+    for d in directory_samples:
+        base = d.rstrip('0123456789')
+        #print "# d is %s, base is %s" % (d, base) ########
+        num = int(d.replace(base, ''))
+        newcat = base + str(num+1)
+        made = False
+        if directory_samples[d]: ########
+            print "# move residue from %s to %s, %i entries" % (d, newcat, len(directory_samples[d])) ########
+        else: ########
+            print "# no entries for %s" % d ########
+        res = []
+        for sample in directory_samples[d]:
+            if sample[1] != d:
+                newsample = sample[0].replace(d, newcat)
+                if not made:
+                    print "# os.makedirs(%s)" % newcat ########
+                    os.makedirs(newcat)
+                    made = True
+                print "# move %s to %s (%r)" % (sample[0], newsample, sample[2]) ########
+                os.rename(sample[0], newsample)
+                res.append(newsample)
+        if res:
+            residue[newcat] = res
+            entries = entries + len(res)
+            print "## %i samples in new residue cat %s" % (len(res), newcat) ########
+    print "# total %i residue entries" % entries ########
+    return entries, residue
+
+try:
+    os.makedirs("lm")
+except OSError:                 # Should properly check it exists and isdir ...
+    pass
+os.putenv("DBACL_PATH", "lm")
+
+entries, residue = map_directories(sys.argv[1:])
+supercats = dict()
+while entries:
+    for c in supercats:
+        print "learn super %s" % c ########
+        #global super_hash_size
+        learn(c, supercats[c],
+              dbaclopts=["-T","email","-h",str(super_hash_size)])
+    cats = residue.keys()
+    for c in cats:
+        if c not in supercats:
+            print "learn %s" % c ########
+            #global regular_hash_size
+            learn(c, [c], dbaclopts=["-T","email","-h",str(regular_hash_size)])
+    r = dict()
+    for c in cats:
+        r[c] = categorize(cats, residue[c], dbaclopts=["-T","email"])
+
+    entries, residue = map_directories_residue(r)
+
+    #global super_threshold
+    if len(residue) + len(cats) + len(supercats) > super_threshold:
+        print "#### residue %i + cats %i + supercats %i = %i > %i" % (len(residue), len(cats), len(supercats), len(residue)+len(cats)+len(supercats), super_threshold) ########
+        ######## TODO: what if len(supercats) > super_threshold?
+        # welp, 64*64 = 4096 categories, should suffice for a little while ...
+        new_super = []
+        new_cats = []
+        for i in xrange(len(cats)):
+            which_new = new_cats
+            if not cats[i] in residue:
+                which_new = new_super
+            which_new.append(cats[i])
+        new_supers = dict()
+        for i in xrange(len(new_super)):
+            base = new_super[i].rstrip('1234567890')
+            if not base in new_supers:
+                new_supers[base] = [new_super[i]]
+            else:
+                new_supers[base].append(new_super[i])
+        for c in new_supers:
+            print "## supercats[%s] = %r" % (new_supers[c][0], new_supers[c]) ########
+            supercats[new_supers[c][0]] = new_supers[c]
+        print "## trimmed cats: %r (was: %r)" % (new_cats, cats) ########
+        cats = new_cats
+
+    # Add back to residue the remaining non-super categories
+    for c in cats:
+        if c not in supercats:
+            residue[c] = []
