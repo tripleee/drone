@@ -30,6 +30,7 @@ def learn (category, samples, dbaclopts=[]):
                 pass
             else:
                 sys.stderr.write('dbacl -l %s: %s\n' % (category, err))
+                raise ValueError(error)
     if out:
         print out
 
@@ -118,9 +119,9 @@ def map_directories_residue (directory_samples):
         newcat = base + str(num+1)
         made = False
         if directory_samples[d]: ########
-            print "# move residue from %s to %s, %i entries" % (d, newcat, len(directory_samples[d])) ########
+            print "# category %s has %i entries, looking for residue to move to %s" % (d, len(directory_samples[d]), newcat) ########
         else: ########
-            print "# no entries for %s" % d ########
+            print "# no residue from %s" % d ########
         res = []
         for sample in directory_samples[d]:
             if sample[1] != d:
@@ -136,61 +137,82 @@ def map_directories_residue (directory_samples):
             residue[newcat] = res
             entries = entries + len(res)
             print "## %i samples in new residue cat %s" % (len(res), newcat) ########
+        else: ########
+            print "## no samples moved from %s to %s" % (d, newcat) ########
     print "# total %i residue entries" % entries ########
     return entries, residue
 
-try:
-    os.makedirs("lm")
-except OSError:                 # Should properly check it exists and isdir ...
-    pass
-os.putenv("DBACL_PATH", "lm")
+def drone (samples, dbacl_options=[]):
+    entries, residue = map_directories(samples)
+    supercats = dict()
+    while entries:
+        for c in supercats:
+            print "learn super %s" % c ########
+            global super_hash_size
+            opts=dbacl_options[:]
+            opts.extend(["-h", str(super_hash_size)])
+            learn(c, supercats[c], dbaclopts=opts)
+        cats = residue.keys()
+        for c in cats:
+            if c not in supercats:
+                print "learn %s" % c ########
+                global regular_hash_size
+                opts=dbacl_options[:]
+                opts.extend(["-h", str(regular_hash_size)])
+                learn(c, [c], dbaclopts=opts)
+        r = dict()
+        for c in cats:
+            r[c] = categorize(cats, residue[c], dbaclopts=dbacl_options)
 
-entries, residue = map_directories(sys.argv[1:])
-supercats = dict()
-while entries:
-    for c in supercats:
-        print "learn super %s" % c ########
-        #global super_hash_size
-        learn(c, supercats[c],
-              dbaclopts=["-T","email","-h",str(super_hash_size)])
-    cats = residue.keys()
-    for c in cats:
-        if c not in supercats:
-            print "learn %s" % c ########
-            #global regular_hash_size
-            learn(c, [c], dbaclopts=["-T","email","-h",str(regular_hash_size)])
-    r = dict()
-    for c in cats:
-        r[c] = categorize(cats, residue[c], dbaclopts=["-T","email"])
+        entries, residue = map_directories_residue(r)
 
-    entries, residue = map_directories_residue(r)
+        global super_threshold
+        if len(residue) + len(cats) + len(supercats) > super_threshold:
+            print "#### residue %i + cats %i + supercats %i = %i > %i" % (len(residue), len(cats), len(supercats), len(residue)+len(cats)+len(supercats), super_threshold) ########
+            ######## TODO: what if len(supercats) > super_threshold?
+            # welp, 64*64 = 4096 categories, should suffice for a little while ...
+            new_super = []
+            new_cats = []
+            for i in xrange(len(cats)):
+                which_new = new_cats
+                if not cats[i] in residue:
+                    which_new = new_super
+                which_new.append(cats[i])
+            new_supers = dict()
+            for i in xrange(len(new_super)):
+                base = new_super[i].rstrip('1234567890')
+                if not base in new_supers:
+                    new_supers[base] = [new_super[i]]
+                else:
+                    new_supers[base].append(new_super[i])
+            for c in new_supers:
+                print "## supercats[%s] = %r" % (new_supers[c][0], new_supers[c]) ########
+                supercats[new_supers[c][0]] = new_supers[c]
+            print "## trimmed cats: %r (was: %r)" % (new_cats, cats) ########
+            cats = new_cats
 
-    #global super_threshold
-    if len(residue) + len(cats) + len(supercats) > super_threshold:
-        print "#### residue %i + cats %i + supercats %i = %i > %i" % (len(residue), len(cats), len(supercats), len(residue)+len(cats)+len(supercats), super_threshold) ########
-        ######## TODO: what if len(supercats) > super_threshold?
-        # welp, 64*64 = 4096 categories, should suffice for a little while ...
-        new_super = []
-        new_cats = []
-        for i in xrange(len(cats)):
-            which_new = new_cats
-            if not cats[i] in residue:
-                which_new = new_super
-            which_new.append(cats[i])
-        new_supers = dict()
-        for i in xrange(len(new_super)):
-            base = new_super[i].rstrip('1234567890')
-            if not base in new_supers:
-                new_supers[base] = [new_super[i]]
-            else:
-                new_supers[base].append(new_super[i])
-        for c in new_supers:
-            print "## supercats[%s] = %r" % (new_supers[c][0], new_supers[c]) ########
-            supercats[new_supers[c][0]] = new_supers[c]
-        print "## trimmed cats: %r (was: %r)" % (new_cats, cats) ########
-        cats = new_cats
+        # Add back to residue the remaining non-super categories
+        for c in cats:
+            if c not in supercats:
+                residue[c] = []
+    result = supercats.keys()
+    result.extend(cats)
+    print "## result %r" % result
+    return result
 
-    # Add back to residue the remaining non-super categories
-    for c in cats:
-        if c not in supercats:
-            residue[c] = []
+DBACL_PATH = "drone_lm"
+def main (samples, dbacl_options=[]):
+    global DBACL_PATH
+    try:
+        os.makedirs(DBACL_PATH)
+    except OSError:    # Should properly check it exists and isdir ...
+        pass
+    os.putenv("DBACL_PATH", DBACL_PATH)
+
+    return(drone(samples))
+
+if __name__ == '__main__':
+    ######## TODO: check that arguments are files
+    ######## TODO: option processing
+    #sys.exit(main(sys.argv[1:]))
+    sys.exit(main(sys.argv[1:], dbacl_options=["-T","email"]))
