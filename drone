@@ -200,19 +200,25 @@ def drone (samples, dbacl_options=[]):
     print "## result %r" % result
     return result
 
-DBACL_PATH = "drone_lm"
-def main (samples, dbacl_options=[]):
-    global DBACL_PATH
+def main (samples, options={}):
+    dbacl_path = "drone_lm"
     try:
-        os.makedirs(DBACL_PATH)
+        dbacl_path = options["DBACL_PATH"]
+    except KeyError:
+        pass
+    try:
+        os.makedirs(dbacl_path)
     except OSError:    # Should properly check it exists and isdir ...
         pass
-    os.putenv("DBACL_PATH", DBACL_PATH)
+    os.putenv("DBACL_PATH", dbacl_path)
 
-    return(drone(samples))
+    return(drone(samples, dbacl_options=options["dbacl_options"]))
 
 if __name__ == '__main__':
     ######## TODO: check that arguments are files
     ######## TODO: option processing
-    #sys.exit(main(sys.argv[1:]))
-    sys.exit(main(sys.argv[1:], dbacl_options=["-T","email"]))
+    #cats = main(sys.argv[1:])
+    cats = main(sys.argv[1:], options={ 'dbacl_options': ['-T','email'] })
+    for c in cats:
+        print c
+    sys.exit(0)
