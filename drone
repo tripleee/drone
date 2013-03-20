@@ -196,8 +196,10 @@ def drone (samples, options={}):
         for c in cats:
             if c not in supercats:
                 residue[c] = []
-    result = supercats.keys()
-    result.extend(cats)
+    result = cats
+    for cat in supercats:
+        result.extend(supercats[cat])
+    result.sort()
     print "## result %r" % result
     return result
 
