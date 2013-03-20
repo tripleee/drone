@@ -4,13 +4,6 @@ import subprocess
 import sys
 import os
 
-# Hard constant: maximum number of categories that dbacl can handle
-super_threshold = 64
-# Tweak: hash table size for super categories
-super_hash_size = 20
-# Tweak: hash table size for regular categories
-regular_hash_size = 8
-
 def learn (category, samples, dbaclopts=[]):
     """
     Run dbacl to learn a new category from the indicated list of samples.
@@ -142,23 +135,32 @@ def map_directories_residue (directory_samples):
     print "# total %i residue entries" % entries ########
     return entries, residue
 
-def drone (samples, dbacl_options=[]):
+def drone (samples, options={}):
+    try:
+        os.makedirs(options.dbacl_path)
+    except OSError:    # Should properly check it exists and isdir ...
+        pass
+    os.putenv("DBACL_PATH", options.dbacl_path)
+
+    if options.dbacl_options is None:
+        dbacl_options = []
+    else:
+        dbacl_options = options.dbacl_options
+
     entries, residue = map_directories(samples)
     supercats = dict()
     while entries:
         for c in supercats:
             print "learn super %s" % c ########
-            global super_hash_size
             opts=dbacl_options[:]
-            opts.extend(["-h", str(super_hash_size)])
+            opts.extend(["-h", str(options.super_hash_size)])
             learn(c, supercats[c], dbaclopts=opts)
         cats = residue.keys()
         for c in cats:
             if c not in supercats:
                 print "learn %s" % c ########
-                global regular_hash_size
                 opts=dbacl_options[:]
-                opts.extend(["-h", str(regular_hash_size)])
+                opts.extend(["-h", str(options.hash_size)])
                 learn(c, [c], dbaclopts=opts)
         r = dict()
         for c in cats:
@@ -166,10 +168,9 @@ def drone (samples, dbacl_options=[]):
 
         entries, residue = map_directories_residue(r)
 
-        global super_threshold
-        if len(residue) + len(cats) + len(supercats) > super_threshold:
-            print "#### residue %i + cats %i + supercats %i = %i > %i" % (len(residue), len(cats), len(supercats), len(residue)+len(cats)+len(supercats), super_threshold) ########
-            ######## TODO: what if len(supercats) > super_threshold?
+        if len(residue) + len(cats) + len(supercats) > options.cat_threshold:
+            print "#### residue %i + cats %i + supercats %i = %i > %i" % (len(residue), len(cats), len(supercats), len(residue)+len(cats)+len(supercats), options.cat_threshold) ########
+            ######## TODO: what if len(supercats) > cat_threshold?
             # welp, 64*64 = 4096 categories, should suffice for a little while ...
             new_super = []
             new_cats = []
@@ -200,25 +201,53 @@ def drone (samples, dbacl_options=[]):
     print "## result %r" % result
     return result
 
-def main (samples, options={}):
-    dbacl_path = "drone_lm"
-    try:
-        dbacl_path = options["DBACL_PATH"]
-    except KeyError:
-        pass
-    try:
-        os.makedirs(dbacl_path)
-    except OSError:    # Should properly check it exists and isdir ...
-        pass
-    os.putenv("DBACL_PATH", dbacl_path)
+def main ():
+    import optparse
 
-    return(drone(samples, dbacl_options=options["dbacl_options"]))
+    parser = optparse.OptionParser(add_help_option=False)
+    parser.add_option('-T', '--type', dest='type', type='choice',
+                      choices=['text', 'email', 'html', 'xml',
+                               'email:headers', 'email:theaders',
+                               'email:xheaders', 'email:noheaders',
+                               'email:atts', 'email:noplain', 'email:plain',
+                               'html:alt', 'html:scripts', 'html:styles',
+                               'html:comments'],
+                      help='Pass -T TYPE to dbacl',
+                      default='text')
+    parser.add_option('-C', '--cat-threshold', dest='cat_threshold', type='int',
+                      help='Threshold for create a super-category',
+                      default=64)
+    parser.add_option('-h', '--hashsize', dest='hash_size', type='int',
+                      help='Regular hash size N when learning',
+                      default=8)
+    parser.add_option('-s', '--supersize', dest='super_hash_size', type='int',
+                      help='Super-category hash size N when learning',
+                      default=20)
+    ######## TODO: support additional dbacl options like -S, -H, etc
+    parser.add_option('-D', '--dbacl-path', dest='dbacl_path', type='string',
+                      help='Use directory DIR for dbacl models',
+                      default='drone_lm')
+    parser.add_option('-?', '--help', dest='help', action='store_true',
+                      help='Show this help message')
+    (options, samples) = parser.parse_args()
+    if options.help:
+        parser.print_help()
+        sys.exit(0)
+    dbacl_options = []
+    for opt, optletter in [('type', '-T')]:
+        try:
+            dbacl_options.extend([optletter, options.__dict__[opt]])
+            del options.__dict__[opt]
+        except KeyError:
+            pass
+    options.dbacl_options = dbacl_options
+
+    ######## TODO: check that arguments are files
+    ######## TODO: check that directories are correctly named
+
+    for cat in drone(samples, options):
+        print cat
+    return 0
 
 if __name__ == '__main__':
-    ######## TODO: check that arguments are files
-    ######## TODO: option processing
-    #cats = main(sys.argv[1:])
-    cats = main(sys.argv[1:], options={ 'dbacl_options': ['-T','email'] })
-    for c in cats:
-        print c
-    sys.exit(0)
+    sys.exit(main())
