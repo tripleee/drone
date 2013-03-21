@@ -187,8 +187,10 @@ def drone (samples, options={}):
                 else:
                     new_supers[base].append(new_super[i])
             for c in new_supers:
-                print "## supercats[%s] = %r" % (new_supers[c][0], new_supers[c]) ########
-                supercats[new_supers[c][0]] = new_supers[c]
+                new_supers[c].sort()
+                new_super_name = "%s_super" % new_supers[c][0]
+                print "## supercats[%s] = %r" % (new_super_name, new_supers[c]) ########
+                supercats[new_super_name] = new_supers[c]
             print "## trimmed cats: %r (was: %r)" % (new_cats, cats) ########
             cats = new_cats
 
@@ -196,6 +198,9 @@ def drone (samples, options={}):
         for c in cats:
             if c not in supercats:
                 residue[c] = []
+
+        ######## TODO: bail if residue is no longer shrinking
+
     result = cats
     for cat in supercats:
         result.extend(supercats[cat])
