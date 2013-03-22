@@ -170,8 +170,6 @@ def drone (samples, options={}):
 
         if len(residue) + len(cats) + len(supercats) > options.cat_threshold:
             print "#### residue %i + cats %i + supercats %i = %i > %i" % (len(residue), len(cats), len(supercats), len(residue)+len(cats)+len(supercats), options.cat_threshold) ########
-            ######## TODO: what if len(supercats) > cat_threshold?
-            # welp, 64*64 = 4096 categories, should suffice for a little while ...
             new_super = []
             new_cats = []
             for i in xrange(len(cats)):
@@ -193,6 +191,11 @@ def drone (samples, options={}):
                 supercats[new_super_name] = new_supers[c]
             print "## trimmed cats: %r (was: %r)" % (new_cats, cats) ########
             cats = new_cats
+
+            if len(supercats) > options.cat_threshold:
+                raise ValueError('Cannot exceed %i x %i categories' %
+                                 (options.cat_threshold,
+                                  options.cat_threshold))
 
         # Add back to residue the remaining non-super categories
         for c in cats:
