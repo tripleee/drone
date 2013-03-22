@@ -4,6 +4,32 @@ import subprocess
 import sys
 import os
 
+"""
+drone - Divide and Reclassify on Near Error
+
+This is a simple wrapper around "dbacl"
+for dividing a collection of samples
+into multiple smaller collections
+based on their internal similarity.
+This works by creating
+a model for each existing category
+(or just a single model
+if you do not have any categories to start from)
+and cross-validating all the samples
+against this model.
+Those samples which fail the cross-validation
+will be moved to a new category,
+which will then be cross-validated again
+until we have enough categories
+that all samples pass cross-validation
+(or no further subdivision is possible
+-- a typical outcome is
+for a small number of samples to defy
+grouping together with other samples,
+many times because they are too small
+to have enough useful features).
+"""
+
 def learn (category, samples, dbaclopts=[]):
     """
     Run dbacl to learn a new category from the indicated list of samples.
@@ -65,7 +91,7 @@ def categorize (categories, samples, dbaclopts=[], threshold=1.0):
     for sample in samples:
         assert isinstance(sample, basestring)
         c = cmd[:]
-        c.extend([sample])
+        c.append(sample)
         #print ("### %s ###" % c) ########
         p = subprocess.Popen(c, shell=False,
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -96,7 +122,7 @@ def map_directories(filenames):
 
 def map_directories_residue (directory_samples):
     """
-    From the output of categorize, discatd the correctly categorized entries
+    From the output of categorize, discard the correctly categorized entries
     and move the remaining entries to new subdirectories, where the number
     suffix of the directory name is incremented by one.
     Return the total number of remaining entries and a hash of directories
